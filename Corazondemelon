@@ -1,0 +1,337 @@
+
+import math
+import random
+import os
+import subprocess
+import numpy as np
+import imageio.v2 as imageio
+
+from PIL import Image, ImageDraw, ImageFont
+from IPython.display import Video, display
+from google.colab import files
+
+# =================================
+# CONFIGURACIÓN VERTICAL
+# =================================
+
+W, H = 1080, 1920
+FPS = 12
+DURACION = 15
+TOTAL = FPS * DURACION
+
+FONDO = (6, 2, 8)
+
+ESCALA = 31
+CENTRO_X = W / 2
+CENTRO_Y = H / 2
+
+ESPACIO = 12
+ALTURA_FILA = 34
+
+random.seed(20)
+
+FRASES = [
+    "I love you", "Seni seviyorum", "Te amo",
+    "Je t'aime", "Ich liebe dich", "Ti amo",
+    "Eu te amo", "Я тебя люблю",
+    "Mon amour", "Mi amor", "Te quiero",
+    "Love you", "Te adoro", "Amore mio",
+    "Forever love", "You are my love",
+    "Amor eterno", "Mi corazón",
+    "Je t'adore", "Ich liebe dich"
+]
+
+# =================================
+# TIPOGRAFÍA
+# =================================
+
+FUENTE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+if not os.path.exists(FUENTE):
+    subprocess.run(
+        ["apt-get", "update", "-qq"],
+        check=True
+    )
+    subprocess.run(
+        ["apt-get", "install", "-y", "fonts-dejavu-core", "-qq"],
+        check=True
+    )
+
+def cargar_fuente(tamano):
+    return ImageFont.truetype(FUENTE, tamano)
+
+# =================================
+# CORAZÓN MATEMÁTICO
+# =================================
+
+def corazon(a):
+    x = 16 * math.sin(a)**3
+
+    y = (
+        13 * math.cos(a)
+        - 5 * math.cos(2*a)
+        - 2 * math.cos(3*a)
+        - math.cos(4*a)
+    )
+
+    return (
+        CENTRO_X + x * ESCALA,
+        CENTRO_Y - y * ESCALA
+    )
+
+POLIGONO = [
+    corazon(2 * math.pi * i / 1000)
+    for i in range(1000)
+]
+
+# =================================
+# DISTRIBUCIÓN
+# =================================
+
+def intervalos(y):
+    xs = []
+
+    for (x1, y1), (x2, y2) in zip(
+        POLIGONO,
+        POLIGONO[1:] + POLIGONO[:1]
+    ):
+        if (y1 <= y < y2) or (y2 <= y < y1):
+            x = x1 + (y-y1)*(x2-x1)/(y2-y1)
+            xs.append(x)
+
+    xs.sort()
+    return list(zip(xs[::2], xs[1::2]))
+
+
+def interseccion(a, b):
+    resultado = []
+
+    for x1, x2 in a:
+        for x3, x4 in b:
+            lo = max(x1, x3)
+            hi = min(x2, x4)
+
+            if hi - lo > 45:
+                resultado.append((lo, hi))
+
+    return resultado
+
+
+def crear_distribucion():
+
+    colocaciones = []
+
+    mitad = ALTURA_FILA / 2
+
+    ymin = min(p[1] for p in POLIGONO)
+    ymax = max(p[1] for p in POLIGONO)
+
+    y = ymin + mitad
+
+    while y < ymax - mitad:
+
+        filas = interseccion(
+            intervalos(y - mitad),
+            intervalos(y + mitad)
+        )
+
+        for izquierda, derecha in filas:
+
+            izquierda += 8
+            derecha -= 8
+
+            cursor = izquierda
+            elementos = []
+
+            while cursor < derecha - 35:
+
+                opciones = FRASES[:]
+                random.shuffle(opciones)
+
+                elegido = None
+
+                for frase in opciones:
+
+                    tamano = random.choice([17, 18, 19, 20])
+
+                    f = cargar_fuente(tamano)
+
+                    prueba = ImageDraw.Draw(
+                        Image.new("RGB", (1, 1))
+                    )
+
+                    caja = prueba.textbbox(
+                        (0, 0), frase, font=f
+                    )
+
+                    ancho = caja[2] - caja[0]
+
+                    if cursor + ancho <= derecha:
+                        elegido = (frase, f, ancho)
+                        break
+
+                if elegido is None:
+                    break
+
+                frase, f, ancho = elegido
+
+                elementos.append([
+                    cursor + ancho / 2,
+                    frase,
+                    f,
+                    ancho
+                ])
+
+                cursor += ancho + ESPACIO
+
+            if elementos:
+
+                sobrante = derecha - (
+                    elementos[-1][0] +
+                    elementos[-1][3] / 2
+                )
+
+                if len(elementos) > 1:
+
+                    for i, elemento in enumerate(elementos):
+                        elemento[0] += (
+                            sobrante * i /
+                            (len(elementos) - 1)
+                        )
+
+                else:
+                    elementos[0][0] = (
+                        izquierda + derecha
+                    ) / 2
+
+                for x, frase, f, ancho in elementos:
+
+                    colocaciones.append({
+                        "x": x,
+                        "y": y,
+                        "frase": frase,
+                        "fuente": f,
+                        "color": random.randint(0, 35)
+                    })
+
+        y += ALTURA_FILA
+
+    return colocaciones
+
+
+colocaciones = crear_distribucion()
+random.shuffle(colocaciones)
+
+# =================================
+# CREAR FOTOGRAMA
+# =================================
+
+def crear_frame(cantidad, brillo):
+
+    imagen = Image.new(
+        "RGB", (W, H), FONDO
+    )
+
+    dibujo = ImageDraw.Draw(imagen)
+
+    for p in colocaciones[:cantidad]:
+
+        x = p["x"]
+        y = p["y"]
+
+        frase = p["frase"]
+        f = p["fuente"]
+
+        intensidad = p["color"]
+
+        rojo = (
+            min(255, 205 + intensidad),
+            12 + intensidad,
+            35 + intensidad
+        )
+
+        caja = dibujo.textbbox(
+            (0, 0), frase, font=f
+        )
+
+        ancho = caja[2] - caja[0]
+        alto = caja[3] - caja[1]
+
+        px = int(x - ancho / 2)
+        py = int(y - alto / 2)
+
+        # Sombra
+        dibujo.text(
+            (px + 2, py + 3),
+            frase,
+            font=f,
+            fill=(30, 3, 10)
+        )
+
+        # Letras rojas
+        dibujo.text(
+            (px, py),
+            frase,
+            font=f,
+            fill=rojo
+        )
+
+    # Contorno del corazón
+    if cantidad == len(colocaciones):
+
+        dibujo.line(
+            POLIGONO + [POLIGONO[0]],
+            fill=(105, 8, 30),
+            width=3
+        )
+
+    return np.array(imagen)
+
+
+# =================================
+# GENERAR VIDEO
+# =================================
+
+ruta = "/content/corazon_vertical.mp4"
+
+print("Generando corazón vertical...")
+print("Resolución:", W, "x", H)
+print("Duración:", DURACION, "segundos")
+print("Frases:", len(colocaciones))
+
+with imageio.get_writer(
+    ruta,
+    fps=FPS,
+    codec="libx264",
+    quality=8,
+    macro_block_size=1,
+    pixelformat="yuv420p"
+) as video:
+
+    for frame in range(TOTAL):
+
+        progreso = (frame + 1) / TOTAL
+
+        cantidad = int(
+            len(colocaciones) * progreso
+        )
+
+        brillo = 0.5 + 0.5 * math.sin(
+            frame * 0.15
+        )
+
+        imagen = crear_frame(
+            cantidad, brillo
+        )
+
+        video.append_data(imagen)
+
+print("¡Video terminado!")
+
+# =================================
+# MOSTRAR Y DESCARGAR
+# =================================
+
+display(Video(ruta, embed=True))
+
+files.download(ruta)
